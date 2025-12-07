@@ -14,7 +14,7 @@ To resolve dependency conflicts between **MusicGen** (requires older Torch) and 
   * **The Verifier (Server):** Hosts the heavy verifier models (Audiobox, CLAP, Librosa). Runs on **PyTorch 2.4+**.
   * **The Search (Client):** Hosts the generator (MusicGen) and search algorithms. Runs on **PyTorch 2.1** (or compatible stable version).
 
-## 📂 Project Structure
+## Project Structure
 
 ```text
 curator/
