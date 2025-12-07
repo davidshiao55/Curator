@@ -17,7 +17,7 @@ To resolve dependency conflicts between **MusicGen** (requires older Torch) and 
 ## Project Structure
 
 ```text
-curator/
+Curator/
 ├── main.py                 # Client Entry Point (Run this to generate music)
 ├── verifier_server.py      # Server Entry Point (Run this to judge music)
 ├── requirements_verifier.txt
@@ -37,8 +37,8 @@ Run in dokcer envoriment for reproducibility.
 ```
 docker run -it \
   --gpus all \
-  -v ./curator:/curator \
-  --name curator \
+  -v ./Curator:/Curator \
+  --name Curator \
   continuumio/miniconda3:latest bash
 ```
 You must set up **two separate virtual environments**.
