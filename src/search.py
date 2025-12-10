@@ -6,68 +6,75 @@ class InferenceSearch:
         self.curator = verifier
 
     def best_of_n(self, prompt, n_candidates=4, duration=10):
-        print(f"Running Best-of-{n_candidates} (Metric: {self.curator.mode})...")
-        candidates = []
-        for i in range(n_candidates):
-            wav = self.gen.generate_full(prompt, duration)
-            score = self.curator.score(wav, self.gen.sample_rate, prompt)
-            candidates.append((score, wav))
-            print(f"  Candidate {i+1}: Score = {score:.4f}")
+        print(f"Running Best-of-{n_candidates} (Batched) [{self.curator.mode}]...")
         
-        best = max(candidates, key=lambda x: x[0])
-        print(f"Winner: {best[0]:.4f}")
-        return best[1]
+        # 1. Generate Batch
+        prompts = [prompt] * n_candidates
+        wavs = self.gen.generate_batch(prompts, duration)
+        
+        # 2. Score Batch
+        scores = self.curator.score_batch(wavs, self.gen.sample_rate, prompts)
+        
+        # 3. Find Best
+        for i, score in enumerate(scores):
+            print(f"  Candidate {i+1}: Score = {score:.4f}")
+            
+        best_idx = scores.index(max(scores))
+        print(f"Winner: Candidate {best_idx+1} ({scores[best_idx]:.4f})")
+        
+        # Returns [Channels, Time]
+        return wavs[best_idx]
 
     def stepwise_beam_search(self, prompt, total_duration=10, step_size=2, beam_width=4, expand_k=8):
-        print(f"Running SBS: Step={step_size}s, Beam={beam_width}")
+        print(f"Running SBS (Batched): Step={step_size}s, Beam={beam_width}, Expand={expand_k}")
         
-        # Beams: List of (score, audio_tensor)
+        # Initialize beams: List of tuples (score, audio)
+        # Start with 1 empty beam
         beams = [(0.0, torch.zeros((1, 0)))] 
         
-        # Calculate number of steps
         num_steps = int(total_duration / step_size)
 
         for step in range(num_steps):
-            # Calculate the TARGET duration for this specific step
-            # Step 0 -> 2s, Step 1 -> 4s, Step 2 -> 6s...
             current_target_duration = (step + 1) * step_size
+            print(f"--- Step {step + 1}/{num_steps} (Target: {current_target_duration}s) ---")
             
-            print(f"--- Step {step + 1}/{num_steps} (Target Duration: {current_target_duration}s) ---")
+            prompt_wavs_list = []
+            next_prompts_list = []
+            
+            # Prepare expansion batch
+            for _, audio in beams:
+                for _ in range(expand_k):
+                    prompt_wavs_list.append(audio)
+                    next_prompts_list.append(prompt)
+
+            # Stack into a single batch tensor [B*K, C, T] or [B*K, 1, C, T]
+            prompt_wavs_batch = torch.stack(prompt_wavs_list)
+            if prompt_wavs_batch.dim() == 4: # Remove extra dim if it crept in
+                prompt_wavs_batch = prompt_wavs_batch.squeeze(1)
+
+            # 1. Batch Generation
+            if step == 0:
+                full_batch = self.gen.generate_batch(next_prompts_list, duration=step_size)
+            else:
+                full_batch = self.gen.generate_continuation_batch(
+                    prompt_wavs_batch, 
+                    next_prompts_list, 
+                    duration=current_target_duration
+                )
+
+            # 2. Batch Verification
+            scores = self.curator.score_batch(full_batch, self.gen.sample_rate, next_prompts_list)
+
+            # 3. Pruning
             candidates = []
-
-            for _, current_audio in beams:
-                # Ensure correct dimensions (Batch, Channels, Time)
-                if current_audio.dim() == 2: 
-                    current_audio = current_audio.unsqueeze(0)
-
-                for k in range(expand_k):
-                    if current_audio.size(-1) == 0:
-                        # First step: Generate from scratch
-                        full_audio = self.gen.generate_full(prompt, duration=step_size)
-                    else:
-                        # Continuation
-                        prompt_audio = current_audio.to(self.gen.model.device)
-                        
-                        # FIX 1: Pass the TOTAL target duration (e.g. 4s), not just the increment (2s)
-                        # FIX 2: MusicGen returns the FULL sequence, so we assign directly (no torch.cat)
-                        full_audio = self.gen.generate_continuation(
-                            prompt_audio, 
-                            prompt, 
-                            duration=current_target_duration
-                        )
-                        
-                        # Ensure output is on CPU and correct shape
-                        if full_audio.dim() == 2: 
-                            full_audio = full_audio.unsqueeze(0)
-
-                    # Score the Accumulated Audio
-                    score = self.curator.score(full_audio, self.gen.sample_rate, prompt)
-                    candidates.append((score, full_audio))
-
-            # Pruning Phase
+            for i in range(len(scores)):
+                # Store as [1, C, T] for next iteration's stacking compatibility
+                candidates.append((scores[i], full_batch[i].unsqueeze(0)))
+            
             candidates.sort(key=lambda x: x[0], reverse=True)
             beams = candidates[:beam_width]
             
             print(f"  Best Beam Score: {beams[0][0]:.4f}")
 
-        return beams[0][1]
+        # Remove the batch dimension before returning [1, C, T] -> [C, T]
+        return beams[0][1].squeeze(0)
