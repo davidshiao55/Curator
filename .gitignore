@@ -2,3 +2,4 @@ src/__pycache__
 output/*
 install.sh
 docker.sh
+evaluation_results/*

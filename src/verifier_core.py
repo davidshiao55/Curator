@@ -55,14 +55,13 @@ class VerifierCore:
         if not text:
             return 0.0
             
-        # --- FIX: CLAP requires 48kHz Audio ---
+        # CLAP requires 48kHz Audio
         target_sr = 48000
         if sr != target_sr:
             # Resample from sr (32000) to target_sr (48000)
             # Ensure audio is on CPU for resampling if necessary, though functional works on GPU
             audio = F.resample(audio, sr, target_sr)
             sr = target_sr
-        # ---------------------------------------
 
         # Processor expects numpy array on CPU
         audio_input = audio.cpu().numpy()
@@ -74,8 +73,18 @@ class VerifierCore:
         with torch.no_grad():
             outputs = self.model(**inputs)
         
-        similarity = outputs.logits_per_audio.item()
-        return 1.0 / (1.0 + np.exp(-similarity))
+        # 1. Get the embeddings
+        audio_embeds = outputs.audio_embeds
+        text_embeds = outputs.text_embeds
+
+        # 2. Normalize them (Cosine Similarity = Dot product of normalized vectors)
+        audio_embeds = audio_embeds / audio_embeds.norm(p=2, dim=-1, keepdim=True)
+        text_embeds = text_embeds / text_embeds.norm(p=2, dim=-1, keepdim=True)
+
+        # 3. Calculate Dot Product
+        similarity = torch.mm(audio_embeds, text_embeds.T).item()
+        
+        return similarity
 
     def _get_theory_score(self, audio, sr):
         y = audio.squeeze().cpu().numpy()
