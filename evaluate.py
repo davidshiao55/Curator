@@ -14,14 +14,16 @@ from src.search import InferenceSearch
 
 def save_audio(wav, sr, path):
     """Helper to save audio tensors"""
-    # Wav shape might be [1, Channels, Time] or [Channels, Time]
-    if wav.dim() == 3: 
+    # Ensure 2D [Channels, Time] for torchaudio.save
+    wav = wav.detach().cpu()
+    if wav.dim() == 3:
         wav = wav.squeeze(0)
-    wav = wav.cpu()
     torchaudio.save(path, wav, sr)
 
 def evaluate_dataset(args):
-    print(f"--- Starting Evaluation: {args.method.upper()} vs Baseline ---")
+    print(f"--- Starting Evaluation ---")
+    print(f"Optimization Metric (Search): {args.search_verifier.upper()}")
+    print(f"Evaluation Metric (Report):   {args.eval_verifier.upper()}")
     
     # 1. Load Dataset (MusicCaps)
     print("Loading MusicCaps dataset...")
@@ -41,20 +43,35 @@ def evaluate_dataset(args):
     # 2. Initialize Models
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     
-    # Generator
-    # We use the same generator instance for both Baseline and Curator
+    # Generator (Shared)
     generator = MusicGenerator(model_size='facebook/musicgen-small', device=device)
     
-    # Verifier (Client)
-    # Important: Pass generator for local perplexity scoring
-    print(f"Connecting to Verifier ({args.verifier}) at {args.server}...")
-    verifier = TheCurator(mode=args.verifier, server_url=args.server, generator=generator)
+    # --- A. Search Verifier (The Guide) ---
+    # Used by Best-of-N / Beam Search to select candidates
+    print(f"Connecting Search Verifier ({args.search_verifier})...")
+    search_verifier = TheCurator(
+        mode=args.search_verifier, 
+        server_url=args.server, 
+        generator=generator
+    )
     
-    # Search Engine
-    search_engine = InferenceSearch(generator, verifier)
+    # --- B. Evaluation Verifier (The Judge) ---
+    # Used only to score the final output for the report
+    if args.eval_verifier == args.search_verifier:
+        eval_verifier = search_verifier
+    else:
+        print(f"Connecting Eval Verifier ({args.eval_verifier})...")
+        eval_verifier = TheCurator(
+            mode=args.eval_verifier, 
+            server_url=args.server, 
+            generator=generator
+        )
+    
+    # Setup Search Engine with the Search Verifier
+    search_engine = InferenceSearch(generator, search_verifier)
 
     results = []
-    output_dir = f"evaluation_results/{args.method}_{args.verifier}"
+    output_dir = f"evaluation_results/{args.method}_opt-{args.search_verifier}_eval-{args.eval_verifier}"
     os.makedirs(output_dir, exist_ok=True)
 
     # 3. Evaluation Loop
@@ -63,20 +80,26 @@ def evaluate_dataset(args):
         youtube_id = item['ytid']
         
         # --- A. Baseline (Vanilla MusicGen) ---
-        # Generate 1 sample using batch method (efficient)
-        # Returns [1, C, T], so we take [0]
+        # Generate 1 sample
         baseline_wav_batch = generator.generate_batch([prompt], args.duration)
         baseline_wav = baseline_wav_batch[0]
         
-        # Score Baseline
-        # Note: score_batch expects [Batch, C, T] and List[str]
-        baseline_score = verifier.score_batch(baseline_wav_batch, generator.sample_rate, [prompt])[0]
+        # Score Baseline (Using Eval Metric)
+        baseline_score = eval_verifier.score_batch(
+            baseline_wav_batch, 
+            generator.sample_rate, 
+            [prompt]
+        )[0]
         
         save_audio(baseline_wav, generator.sample_rate, f"{output_dir}/{i}_baseline.wav")
 
         # --- B. The Curator (Search Method) ---
         if args.method == "best_of_n":
-            curator_wav = search_engine.best_of_n(prompt, n_candidates=args.candidates, duration=args.duration)
+            curator_wav = search_engine.best_of_n(
+                prompt, 
+                n_candidates=args.candidates, 
+                duration=args.duration
+            )
         elif args.method == "sbs":
             curator_wav = search_engine.stepwise_beam_search(
                 prompt, 
@@ -86,32 +109,36 @@ def evaluate_dataset(args):
                 expand_k=8         
             )
         
-        # Score Curator Result
-        # Wrap result in batch dim [1, C, T] for scoring
-        curator_wav_batch = curator_wav.unsqueeze(0)
-        curator_score = verifier.score_batch(curator_wav_batch, generator.sample_rate, [prompt])[0]
+        # Score Curator Result (Using Eval Metric)
+        curator_wav_batch = curator_wav.unsqueeze(0) # Wrap for batch scoring
+        curator_score = eval_verifier.score_batch(
+            curator_wav_batch, 
+            generator.sample_rate, 
+            [prompt]
+        )[0]
         
         save_audio(curator_wav, generator.sample_rate, f"{output_dir}/{i}_curator.wav")
 
         # Log Data
         diff = curator_score - baseline_score
-        # print(f"  ID: {i} | Base: {baseline_score:.4f} | Curator: {curator_score:.4f} | Diff: {diff:.4f}")
         
         results.append({
             "id": youtube_id,
             "prompt": prompt,
             "baseline_score": baseline_score,
             "curator_score": curator_score,
-            "improvement": diff
+            "improvement": diff,
+            "eval_metric": args.eval_verifier
         })
         
-        # Save intermediate results frequently
+        # Save intermediate results
         pd.DataFrame(results).to_csv(f"{output_dir}/results.csv", index=False)
 
     # 4. Final Summary
     df = pd.DataFrame(results)
     print("\n--- Evaluation Complete ---")
-    print(f"Metric Evaluated:       {args.verifier.upper()}")
+    print(f"Optimized For:          {args.search_verifier.upper()}")
+    print(f"Evaluated On:           {args.eval_verifier.upper()}")
     print(f"Average Baseline Score: {df['baseline_score'].mean():.4f}")
     print(f"Average Curator Score:  {df['curator_score'].mean():.4f}")
     print(f"Average Improvement:    {df['improvement'].mean():.4f}")
@@ -124,10 +151,16 @@ if __name__ == "__main__":
     parser.add_argument("--method", choices=["best_of_n", "sbs"], default="best_of_n")
     parser.add_argument("--candidates", type=int, default=4, help="N for Best-of-N")
     parser.add_argument("--beam_width", type=int, default=4, help="Beam Width for SBS")
-    
-    # Added perplexity
-    parser.add_argument("--verifier", choices=["quality", "semantic", "theory", "perplexity"], default="semantic")
     parser.add_argument("--server", type=str, default="http://localhost:8000")
+    
+    # --- Separated Verifiers ---
+    # 1. Search Verifier: The metric being optimized (e.g. Perplexity)
+    parser.add_argument("--search_verifier", choices=["quality", "semantic", "theory", "perplexity"], 
+                        default="perplexity", help="Metric to use for Search (Optimization)")
+    
+    # 2. Eval Verifier: The metric used to judge the final quality (e.g. Semantic)
+    parser.add_argument("--eval_verifier", choices=["quality", "semantic", "theory", "perplexity"], 
+                        default="semantic", help="Metric to use for Final Evaluation")
     
     args = parser.parse_args()
     evaluate_dataset(args)
