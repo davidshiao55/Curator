@@ -126,7 +126,6 @@ def main():
     verifiers = ["clap", "perplexity", "theory", "quality", "muq", "imagebind"]
     
     # Budgets to test (Powers of 2)
-    # N=1 is Baseline, others are Best-of-N
     n_values = [1, 2, 4, 8, 16] 
 
     results_data = []
@@ -181,7 +180,8 @@ def main():
                     # KLD is lower-is-better, so improvement = (Baseline - New)
                     kld_delta = baseline_kld - kld 
 
-                print(f" Done ({elapsed:.1f}s). CLAP: {clap:.4f} ({'+' if clap_delta>=0 else ''}{clap_delta:.4f})")
+                # Updated Print Statement
+                print(f" Done ({elapsed:.1f}s). CLAP: {clap:.4f} ({'+' if clap_delta>=0 else ''}{clap_delta:.4f}) | KLD: {kld:.4f} ({'+' if kld_delta>=0 else ''}{kld_delta:.4f})")
 
                 # Log Data
                 results_data.append({
