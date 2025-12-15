@@ -126,7 +126,7 @@ def main():
     verifiers = ["clap", "perplexity", "theory", "quality", "muq", "imagebind"]
     
     # Budgets to test (Powers of 2)
-    n_values = [1, 2, 4, 8, 16] 
+    n_values = [1, 2, 4, 8] 
 
     results_data = []
 
