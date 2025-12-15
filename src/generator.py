@@ -15,16 +15,44 @@ class MusicGenerator:
         self.model.lm.eval()
         self.model.compression_model.eval()
 
-    def generate_batch(self, prompts: tp.List[str], duration: float):
-        self.model.set_generation_params(duration=duration)
+    def generate_batch(self, prompts: tp.List[str], duration: float, temperature: float = 1.0):
+        """
+        Generates audio from text prompts.
+        Args:
+            prompts: List of text descriptions.
+            duration: Audio duration in seconds.
+            temperature: Sampling temperature. Set to 0 for greedy decoding (argmax).
+        """
+        # Logic: If temp is 0, disable sampling (greedy). Otherwise use sampling with temp.
+        use_sampling = temperature > 0
+        self.model.set_generation_params(
+            duration=duration,
+            temperature=temperature if use_sampling else 1.0, # value ignored if use_sampling=False
+            use_sampling=use_sampling
+        )
         wav = self.model.generate(prompts)
         return wav.cpu()
 
-    def generate_continuation_batch(self, prompt_wavs: torch.Tensor, prompts: tp.List[str], duration: float):
-        self.model.set_generation_params(duration=duration)
+    def generate_continuation_batch(self, prompt_wavs: torch.Tensor, prompts: tp.List[str], duration: float, temperature: float = 1.0):
+        """
+        Generates audio continuations from audio prompts.
+        Args:
+            prompt_wavs: Audio prompts tensor [B, C, T].
+            prompts: List of text descriptions.
+            duration: Audio duration in seconds.
+            temperature: Sampling temperature. Set to 0 for greedy decoding.
+        """
+        use_sampling = temperature > 0
+        self.model.set_generation_params(
+            duration=duration,
+            temperature=temperature if use_sampling else 1.0,
+            use_sampling=use_sampling
+        )
+        
         prompt_wavs = prompt_wavs.to(self.device)
         if prompt_wavs.dim() == 2:
             prompt_wavs = prompt_wavs.unsqueeze(1)
+            
         wav = self.model.generate_continuation(
             prompt=prompt_wavs, 
             prompt_sample_rate=self.sample_rate, 
