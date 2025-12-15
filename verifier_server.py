@@ -13,10 +13,26 @@ DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 @app.on_event("startup")
 async def startup_event():
     print("--- Loading Verifier Models (Server Side) ---")
-    # Only load models that require specific environments (Torch 2.4+)
+    
+    # 1. Quality
     verifiers['quality'] = VerifierCore(mode='quality', device=DEVICE)
-    verifiers['semantic'] = VerifierCore(mode='semantic', device=DEVICE)
+    
+    # 2. Semantic (CLAP)
+    verifiers['clap'] = VerifierCore(mode='clap', device=DEVICE)
+    
+    # 3. Semantic (MuQ)
+    try:
+        verifiers['muq'] = VerifierCore(mode='muq', device=DEVICE)
+    except: print("[Warning] MuQ failed to load.")
+
+    # 4. Semantic (ImageBind)
+    try:
+        verifiers['imagebind'] = VerifierCore(mode='imagebind', device=DEVICE)
+    except Exception as e: print(f"[Warning] ImageBind failed to load: {e}")
+
+    # 5. Theory
     verifiers['theory'] = VerifierCore(mode='theory', device=DEVICE)
+    
     print("--- Models Ready ---")
 
 @app.post("/score_batch")
