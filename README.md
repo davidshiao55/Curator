@@ -2,47 +2,57 @@
 
 **The Curator** is a research project exploring **Test-Time Compute** for music generation. Instead of training larger models, it optimizes the output of a frozen autoregressive model (MusicGen) by treating generation as a search problem.
 
-It implements two search algorithms:
-1.  **Best-of-N (Rejection Sampling):** Generates $N$ complete clips and selects the best one.
-2.  **Stepwise Beam Search (SBS):** Optimizes generation incrementally (e.g., every 2 seconds) to navigate the generation space more efficiently.
+Aligned with the DeepMind paper *"Scaling LLM Test-Time Compute Optimally"*, this repository implements strategies to exchange inference-time compute for better audio quality and semantic alignment.
+
+## Core Search Algorithms
+
+The engine implements three search strategies, all unified under a **Generation Budget ($N$)** framework to ensure fair comparisons:
+
+1.  **Best-of-N (Parallel Sampling):**
+    * Generates $N$ complete clips in parallel.
+    * Selects the single best clip based on the verifier score.
+    * *Cost:* $N$ samples.
+
+2.  **Beam Search (BFS-V):**
+    * A tree-search algorithm that maintains a fixed population size of $N$ at every step.
+    * **Logic:** Prune current candidates to the top $K = N/M$, then expand each parent by $M$ (Beam Width).
+    * *Cost:* $\approx N$ samples per step (comparable to Best-of-N).
+
+3.  **Lookahead Search (MCTS-Lite):**
+    * Extends Beam Search. Instead of scoring the *current* partial audio, it performs a **greedy rollout** for $k$ steps into the future.
+    * The score of the future state is used to rank the current candidate.
+    * *Cost:* $N \times (k+1)$ samples (more expensive, but "smarter").
+
+---
 
 ## Architecture: Client-Server
 
-To resolve dependency conflicts between **MusicGen** (requires older Torch) and **Audiobox/CLAP** (require newer Torch), this project uses a **Client-Server architecture**:
+To resolve dependency conflicts between **MusicGen** (requires older Torch) and modern verifiers like **Audiobox/CLAP** (require newer Torch), this project uses a **Client-Server architecture**:
 
-* **The Verifier (Server):** Hosts the heavy verifier models (Audiobox, CLAP, Librosa). Runs on **PyTorch 2.4+**.
+* **The Verifier (Server):** Hosts heavy scoring models (Audiobox, CLAP, MuQ, ImageBind). Runs on **PyTorch 2.4+**.
 * **The Search (Client):** Hosts the generator (MusicGen) and search algorithms. Runs on **PyTorch 2.1** (or compatible stable version).
 
 ## Project Structure
 
 ```text
 Curator/
-├── main.py                 # Client Entry Point (Run this to generate music)
-├── verifier_server.py      # Server Entry Point (Run this to judge music)
-├── evaluate.py             # Evaluation script for MusicCaps
-└──  src/
-    ├── generator.py        # MusicGen Wrapper (Locally computes Perplexity)
-    ├── search.py           # Search Algorithms (Best-of-N, SBS)
-    ├── verifier.py         # Client-side Wrapper (HTTP Client)
-    └── verifier_core.py    # Server-side Logic (Audiobox/CLAP Inference)
-
+├── benchmark.py            # Main evaluation script (MusicCaps benchmark)
+├── latency_experiment.py   # Latency & Overhead testing (Fair budget analysis)
+├── verifier_experiment.py  # Scaling Law experiments (N=1..8 sweeps)
+├── verifier_server.py      # Server Entry Point (Hosts CLAP, MuQ, etc.)
+├── download_data.py        # Utility to download MusicCaps reference audio
+└── src/
+    ├── generator.py        # MusicGen Wrapper
+    ├── search.py           # Implementation of Best-of-N, Beam, Lookahead
+    ├── verifier.py         # Client-side HTTP Wrapper
+    └── verifier_core.py    # Server-side Inference Logic
 ````
 
 -----
 
 ## Installation
 
-Run in a Docker environment for reproducibility.
-
-```bash
-docker run -it \
-  --gpus all \
-  -v ./Curator:/Curator \
-  --name Curator \
-  continuumio/miniconda3:latest bash
-```
-
-You must set up **two separate virtual environments**.
+We recommend running in a Docker container or using Conda. You must set up **two separate virtual environments**.
 
 ### 1\. Environment A: The Generator (Client)
 
@@ -73,6 +83,9 @@ pip install matplotlib seaborn
 ```
 
 ### 2\. Environment B: The Verifier (Server)
+
+This environment runs the scoring models.
+
 ```bash
 # Verifier
 conda create -n verifier python=3.9
@@ -88,13 +101,15 @@ pip install muq
 pip install git+https://github.com/facebookresearch/ImageBind.git
 ```
 
-### 3\. Utiliy Environment : Downloader
+### 3\. Utility: Data Downloader
+
 ```bash
 conda create -n downloader python=3.10
 conda activate downloader
 conda install -c conda-forge ffmpeg
 pip install yt-dlp datasets pandas torchaudio tqdm
 ```
+
 -----
 
 ## Usage
@@ -103,68 +118,69 @@ pip install yt-dlp datasets pandas torchaudio tqdm
 
 **Terminal 1 (`conda activate verifier`)**
 
-This loads the heavy models (Audiobox, CLAP) into VRAM.
-
 ```bash
 python verifier_server.py
 ```
 
 *Wait until you see: `Uvicorn running on http://0.0.0.0:8000`*
 
-### Step 2: Run Music Generation
+> **Note:** To save VRAM, you can comment out unused models (like ImageBind or MuQ) in `verifier_server.py`.
+
+### Step 2: Download Reference Data
+
+**Terminal 2 (`conda activate downloader`)**
+
+Before running experiments, you must download the MusicCaps reference audio (ground truth) from YouTube. This is required to calculate metrics like KLD.
+
+```bash
+python download_data.py
+```
+
+*This will download audio files into the `music_data/` directory.*
+
+### Step 3: Run Experiments
 
 **Terminal 2 (`conda activate generator`)**
 
-You can now run experiments using the client.
+#### A. Standard Benchmark
 
-#### A. Baseline: Best-of-N
-
-Generates 4 candidate clips and picks the best one based on **Quality** (Audiobox).
+Evaluate a specific method on the MusicCaps dataset.
 
 ```bash
-python main.py --method best_of_n --candidates 4 --verifier quality --prompt "lofi hip hop beat"
+# Best-of-16 using CLAP verifier
+python benchmark.py --method best_of_n --candidates 16 --verifier clap
+
+# Beam Search (Budget N=16, Width M=4) using Quality verifier
+python benchmark.py --method sbs --candidates 16 --beam_width 4 --verifier quality
+
+# Lookahead Search (N=16, M=4, k=2)
+python benchmark.py --method lookahead --candidates 16 --beam_width 4 --lookahead_k 2 --verifier clap
 ```
 
-#### B. Stepwise Beam Search (SBS)
+#### B. Scaling Law Experiment (`verifier_experiment.py`)
 
-Generates audio in 2-second chunks, keeping the top 4 beams at each step, guided by **Semantic Similarity** (CLAP).
+This script automatically sweeps budgets $N \in [1, 2, 4, 8]$ across multiple verifiers to see which metric scales best.
 
 ```bash
-python main.py --method sbs --duration 10 --verifier semantic --prompt "cyberpunk city rain"
+python verifier_experiment.py --samples 10 --duration 10
 ```
 
-## Evaluation
+#### C. Latency & Compute Fairness (`latency_experiment.py`)
 
-To benchmark **The Curator** against the baseline (Vanilla MusicGen), use the `evaluate.py` script. This runs the pipeline on the **MusicCaps** dataset (or a subset) and reports the average improvement in the chosen metric.
-
-### Run Evaluation
-
-Ensure the Verifier Server is running (unless using `perplexity`).
+Measures the wall-clock time of different methods to verify if budgets are comparable.
 
 ```bash
-# Example: Evaluate Stepwise Beam Search (SBS) optimizing Semantic Score on 10 samples
-python evaluate.py --method sbs --verifier semantic --num_samples 10
+python latency_experiment.py --num_samples 5 --verifier perplexity
 ```
+-----
 
-### Analyze Results
-
-Results are saved in `evaluation_results/<method>_<verifier>/`:
-
-  * `results.csv`: Detailed scores for each sample (Baseline vs. Curator).
-  * `*_baseline.wav`: Audio generated by vanilla MusicGen.
-  * `*_curator.wav`: Audio generated with Search.
-
-### Command Line Arguments
+## Command Line Arguments
 
 | Argument | Default | Description |
 | :--- | :--- | :--- |
-| `--prompt` | "8-bit..." | Text description for generation. |
-| `--duration` | 10 | Total length of audio in seconds. |
-| `--method` | `best_of_n` | Search algorithm: `best_of_n` or `sbs`. |
-| `--verifier` | `quality` | Metric to optimize: `quality`, `semantic`, `theory`, `perplexity`. |
-| `--candidates`| 4 | Number of candidates for Best-of-N. |
-| `--beam_width`| 4 | Number of beams to keep for SBS. |
-| `--server` | `http://...`| URL of the verifier server (default: localhost:8000). |
-
-
-
+| `--method` | `baseline` | Search strategy: `baseline`, `best_of_n`, `sbs` (Beam), `lookahead`. |
+| `--verifier` | `perplexity` | Metric to optimize: `clap`, `quality`, `muq`, `imagebind`, `perplexity`. |
+| `--candidates`| 16 | **Generation Budget ($N$)**. The total number of candidates processed per step. |
+| `--beam_width`| 4 | **Expansion Factor ($M$)**. Number of children generated per parent in Beam/Lookahead. |
+| `--lookahead_k`| 1 | **Simulation Steps ($k$)**. How far to simulate into the future for Lookahead Search. |
+| `--duration` | 10 | Audio duration in seconds. |
