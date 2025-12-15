@@ -64,6 +64,12 @@ python -m pip install -U audiocraft  # stable release
 pip install "transformers==4.37.2" --force-reinstall
 pip install "numpy<2" --force-reinstall
 pip install datasets pandas
+
+# for running benchmark
+pip install git+https://github.com/kkoutini/passt_hear21@0.0.19#egg=hear21passt
+pip install laion-clap
+wget https://huggingface.co/lukewys/laion_clap/resolve/main/music_audioset_epoch_15_esc_90.14.pt
+pip install matplotlib seaborn
 ```
 
 ### 2\. Environment B: The Verifier (Server)
@@ -73,13 +79,22 @@ conda create -n verifier python=3.9
 
 # Install audiobox-aesthetics
 pip install audiobox_aesthetics
-# pip install --no-deps audiobox_aesthetics
 pip install laion-clap
+wget https://huggingface.co/lukewys/laion_clap/resolve/main/music_audioset_epoch_15_esc_90.14.pt
 pip install fastapi
 pip install uvicorn
 pip install python-multipart
+pip install muq
+pip install git+https://github.com/facebookresearch/ImageBind.git
 ```
 
+### 3\. Utiliy Environment : Downloader
+```bash
+conda create -n downloader python=3.10
+conda activate downloader
+conda install -c conda-forge ffmpeg
+pip install yt-dlp datasets pandas torchaudio tqdm
+```
 -----
 
 ## Usage
