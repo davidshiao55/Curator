@@ -7,5 +7,5 @@ benchmark_results
 music_data
 music_audioset_epoch_15_esc_90.14.pt
 .checkpoints
-latency_comparison.png
+*.png
 *.csv

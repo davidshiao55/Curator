@@ -5,11 +5,21 @@ import time
 import argparse
 import matplotlib.pyplot as plt
 import seaborn as sns
+import torch
+import numpy as np
+import random
 
 def run_benchmark_call(method, verifier, candidates, num_samples, duration):
     """
     Wraps the call to benchmark.py and retrieves the result.
     """
+    # Fix seed for reproducibility
+    seed = 42
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    np.random.seed(seed)
+    random.seed(seed)
+
     cmd = [
         "python", "benchmark.py",
         "--method", method,
