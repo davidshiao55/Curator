@@ -27,14 +27,11 @@ def measure_time(func, *args, **kwargs):
     return result, end - start
 
 def plot_latency(df):
-    """Generates a comparison graph for latency with Cost Annotations."""
+    """Generates a comparison graph for latency with Cost Annotations and Point Labels."""
     print("\nGenerating latency plot...")
     
     # Filter out Baseline for the main scaling plot (it's N=1)
     plot_df = df[df['Method'].str.contains("N=")].copy()
-    
-    # Extract raw N for X-axis (Budget)
-    # We want to plot them against the "Base Budget N", but annotate the true cost
     
     # Create descriptive labels for the legend
     def get_legend_label(row):
@@ -42,15 +39,10 @@ def plot_latency(df):
         if "Best-of" in method:
             return "Best-of-N (Cost: N)"
         elif "SBS" in method:
-            # Beam search cost is roughly N per step
             return "Beam Search (Cost: N)"
         elif "Lookahead" in method:
-            # Extract k from string "Lookahead (N=..., k=...)"
             try:
-                k_part = method.split("k=")[1].split(")")[0]
-                k = int(k_part)
-                # Paper definition: N * (k + 1)
-                return f"Lookahead (Cost: N $\\times$ (k+1))"
+                return f"Lookahead (Cost: N $\\times$ k+1)"
             except:
                 return "Lookahead Search"
         return method
@@ -59,9 +51,9 @@ def plot_latency(df):
     
     # Set style
     sns.set_theme(style="whitegrid")
-    plt.figure(figsize=(10, 6))
+    plt.figure(figsize=(12, 8))  # Slightly larger for annotations
     
-    # Plot
+    # Plot Lines
     sns.lineplot(
         data=plot_df,
         x="Budget (N)",
@@ -71,7 +63,8 @@ def plot_latency(df):
         markers=True,
         dashes=False,
         linewidth=2.5,
-        palette="viridis"
+        palette="viridis",
+        markersize=9
     )
     
     # Add Baseline line
@@ -80,6 +73,21 @@ def plot_latency(df):
         baseline_time = baseline_row['Avg Time (s)'].values[0]
         plt.axhline(y=baseline_time, color='r', linestyle='--', label=f"Baseline (N=1): {baseline_time:.2f}s")
     
+    # --- ANNOTATE POINTS ---
+    # Iterate through the dataframe to place text above each point
+    for i, row in plot_df.iterrows():
+        plt.text(
+            x=row['Budget (N)'], 
+            y=row['Avg Time (s)'] + 0.5,  # Slight offset upward
+            s=f"{row['Avg Time (s)']:.1f}s",
+            color='black',
+            ha='center',
+            va='bottom',
+            fontsize=10,
+            fontweight='bold',
+            bbox=dict(facecolor='white', alpha=0.5, edgecolor='none', pad=0.5) # Optional background for readability
+        )
+
     plt.title("Inference Latency by Compute Budget (N)", fontsize=16)
     plt.xlabel("Generation Budget N (Batch Size)", fontsize=12)
     plt.ylabel("Time per Sample (seconds)", fontsize=12)

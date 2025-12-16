@@ -5,21 +5,11 @@ import time
 import argparse
 import matplotlib.pyplot as plt
 import seaborn as sns
-import torch
-import numpy as np
-import random
 
 def run_benchmark_call(method, verifier, candidates, num_samples, duration):
     """
     Wraps the call to benchmark.py and retrieves the result.
     """
-    # Fix seed for reproducibility
-    seed = 42
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed(seed)
-    np.random.seed(seed)
-    random.seed(seed)
-
     cmd = [
         "python", "benchmark.py",
         "--method", method,
@@ -80,11 +70,11 @@ def plot_results(df):
         palette="viridis"
     )
     
-    plt.title("Verifier Scaling: Semantic Consistency (CLAP)", fontsize=16)
+    plt.title("Verifer Scaling", fontsize=16)
+    plt.ylabel("CLAP Score: Audio-Text Alignment (Higher is Better)", fontsize=12)
     plt.xlabel("Compute Budget (N Candidates)", fontsize=12)
-    plt.ylabel("CLAP Score (Higher is Better)", fontsize=12)
     
-    # Log scale for N (Base 2 fits 1, 2, 4, 8, 16 perfectly)
+    # Log scale for N
     plt.xscale('log', base=2)
     unique_n = sorted(plot_df['n'].unique())
     plt.xticks(unique_n, unique_n)
@@ -113,9 +103,9 @@ def plot_results(df):
             palette="magma_r"
         )
         
-        plt.title("Verifier Scaling: Audio Quality (KLD)", fontsize=16)
+        plt.title("Verifer Scaling", fontsize=16)
+        plt.ylabel("KLD: Music-Music Concept Similarity (Lower is Better)", fontsize=12)
         plt.xlabel("Compute Budget (N Candidates)", fontsize=12)
-        plt.ylabel("KLD Score (Lower is Better)", fontsize=12)
         
         plt.xscale('log', base=2)
         plt.xticks(unique_n, unique_n)
@@ -127,7 +117,8 @@ def plot_results(df):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--samples", type=int, default=10, help="Number of samples per run")
+    # RENAMED: --samples -> --num_samples
+    parser.add_argument("--num_samples", type=int, default=10, help="Number of samples per run")
     parser.add_argument("--duration", type=int, default=10, help="Audio duration (sec)")
     args = parser.parse_args()
 
@@ -136,13 +127,14 @@ def main():
     verifiers = ["clap", "perplexity", "theory", "quality", "muq", "imagebind"]
     
     # Budgets to test (Powers of 2)
-    n_values = [1, 2, 4, 8] 
+    # N=1 is Baseline, others are Best-of-N
+    n_values = [1, 2, 4, 8, 16] 
 
     results_data = []
 
     print(f"{'='*60}")
     print(f"VERIFIER SCALING EXPERIMENT")
-    print(f"Samples per run: {args.samples}")
+    print(f"Samples per run: {args.num_samples}")
     print(f"Budgets (N): {n_values}")
     print(f"{'='*60}\n")
 
@@ -168,7 +160,7 @@ def main():
                 method = "best_of_n"
 
             # Execute
-            row = run_benchmark_call(method, verifier, n, args.samples, args.duration)
+            row = run_benchmark_call(method, verifier, n, args.num_samples, args.duration)
             elapsed = time.time() - start_time
             
             if row is not None:
