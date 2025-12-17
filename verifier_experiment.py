@@ -6,7 +6,7 @@ import argparse
 import matplotlib.pyplot as plt
 import seaborn as sns
 
-def run_benchmark_call(method, verifier, candidates, num_samples, duration):
+def run_benchmark_call(method, verifier, candidates, num_samples, duration, seed):
     """
     Wraps the call to benchmark.py and retrieves the result.
     """
@@ -15,7 +15,8 @@ def run_benchmark_call(method, verifier, candidates, num_samples, duration):
         "--method", method,
         "--verifier", verifier,
         "--num_samples", str(num_samples),
-        "--duration", str(duration)
+        "--duration", str(duration),
+        "--seed", str(seed)
     ]
     
     # Add candidates only if not baseline
@@ -70,7 +71,7 @@ def plot_results(df):
         palette="viridis"
     )
     
-    plt.title("Verifer Scaling", fontsize=16)
+    plt.title("Verifier type", fontsize=16)
     plt.ylabel("CLAP Score: Audio-Text Alignment (Higher is Better)", fontsize=12)
     plt.xlabel("Compute Budget (N Candidates)", fontsize=12)
     
@@ -81,8 +82,8 @@ def plot_results(df):
     
     plt.legend(title="Verifier", bbox_to_anchor=(1.05, 1), loc='upper left')
     plt.tight_layout()
-    plt.savefig("scaling_clap.png", dpi=300)
-    print("Saved 'scaling_clap.png'")
+    plt.savefig("verifer_comparison_clap.png", dpi=300)
+    print("Saved 'verifer_comparison_clap.png'")
 
     # --- Plot 2: KLD Score (Audio Quality/Similarity) ---
     plt.figure(figsize=(10, 6))
@@ -103,8 +104,8 @@ def plot_results(df):
             palette="magma_r"
         )
         
-        plt.title("Verifer Scaling", fontsize=16)
-        plt.ylabel("KLD: Music-Music Concept Similarity (Lower is Better)", fontsize=12)
+        plt.title("Verifier type", fontsize=16)
+        plt.ylabel("KLD: Concept Similarity (Lower is Better)", fontsize=12)
         plt.xlabel("Compute Budget (N Candidates)", fontsize=12)
         
         plt.xscale('log', base=2)
@@ -112,22 +113,21 @@ def plot_results(df):
         
         plt.legend(title="Verifier", bbox_to_anchor=(1.05, 1), loc='upper left')
         plt.tight_layout()
-        plt.savefig("scaling_kld.png", dpi=300)
-        print("Saved 'scaling_kld.png'")
+        plt.savefig("verifer_comparison_kld.png", dpi=300)
+        print("Saved 'verifer_comparison_kld.png'")
 
 def main():
     parser = argparse.ArgumentParser()
-    # RENAMED: --samples -> --num_samples
     parser.add_argument("--num_samples", type=int, default=10, help="Number of samples per run")
     parser.add_argument("--duration", type=int, default=10, help="Audio duration (sec)")
+    parser.add_argument("--seed", type=int, default=42, help="Random seed for reproducibility")
     args = parser.parse_args()
 
     # --- Experiment Configuration ---
     # List of all verifiers you want to test.
-    verifiers = ["clap", "perplexity", "theory", "quality", "muq", "imagebind"]
+    verifiers = ["muq", "imagebind", "clap", "perplexity", "theory", "quality"]
     
     # Budgets to test (Powers of 2)
-    # N=1 is Baseline, others are Best-of-N
     n_values = [1, 2, 4, 8, 16] 
 
     results_data = []
@@ -136,6 +136,7 @@ def main():
     print(f"VERIFIER SCALING EXPERIMENT")
     print(f"Samples per run: {args.num_samples}")
     print(f"Budgets (N): {n_values}")
+    print(f"Seed: {args.seed}")
     print(f"{'='*60}\n")
 
     for verifier in verifiers:
@@ -160,7 +161,7 @@ def main():
                 method = "best_of_n"
 
             # Execute
-            row = run_benchmark_call(method, verifier, n, args.num_samples, args.duration)
+            row = run_benchmark_call(method, verifier, n, args.num_samples, args.duration, args.seed)
             elapsed = time.time() - start_time
             
             if row is not None:
